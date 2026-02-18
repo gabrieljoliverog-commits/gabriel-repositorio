@@ -1,0 +1,4 @@
+# Ignorar base de datos y exports locales
+school.db
+students_export.csv
+__pycache__/
