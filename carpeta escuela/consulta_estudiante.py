@@ -23,16 +23,15 @@ nombre_raw = st.text_input("Nombre del Estudiante:")
 
 if st.button("Buscar Notas"):
     if nombre_raw:
-        # Limpiamos el nombre
         nombre_buscado = limpiar_texto(nombre_raw)
         
         try:
-            # CAMBIO CLAVE: Usamos .ilike() con % para que busque coincidencias aunque haya espacios
             res = supabase.table("unefa_nube").select("*").ilike("nombre", f"%{nombre_buscado}%").execute()
             
             if res.data:
-                # Si hay varios parecidos, mostramos el primero
                 alumno = res.data[0]
+                st.session_state['alumno_actual'] = alumno # Guardamos los datos para editar
+                
                 st.success(f"### Estudiante: {alumno['nombre']}")
                 
                 c1, c2, c3 = st.columns(3)
@@ -53,3 +52,32 @@ if st.button("Buscar Notas"):
             st.error(f"Error: {e}")
     else:
         st.warning("Escribe un nombre.")
+
+# --- SECCIÓN PARA MODIFICAR NOTAS (Solo visible si hay un alumno seleccionado) ---
+if 'alumno_actual' in st.session_state:
+    st.write("### 📝 Modificar Notas de este Estudiante")
+    alumno = st.session_state['alumno_actual']
+    
+    with st.form("form_edicion"):
+        col1, col2, col3, col4, col5 = st.columns(5)
+        n1 = col1.number_input("N1", value=float(alumno['n1']), min_value=0.0, max_value=20.0)
+        n2 = col2.number_input("N2", value=float(alumno['n2']), min_value=0.0, max_value=20.0)
+        n3 = col3.number_input("N3", value=float(alumno['n3']), min_value=0.0, max_value=20.0)
+        n4 = col4.number_input("N4", value=float(alumno['n4']), min_value=0.0, max_value=20.0)
+        n5 = col5.number_input("N5", value=float(alumno['n5']), min_value=0.0, max_value=20.0)
+        
+        if st.form_submit_button("Guardar Cambios en la Nube"):
+            nueva_final = round((n1 + n2 + n3 + n4 + n5) / 5, 2)
+            
+            # Actualizamos en Supabase usando el nombre como referencia
+            datos_nuevos = {
+                "n1": n1, "n2": n2, "n3": n3, "n4": n4, "n5": n5,
+                "nota_final": nueva_final
+            }
+            
+            try:
+                supabase.table("unefa_nube").update(datos_nuevos).eq("nombre", alumno['nombre']).execute()
+                st.success("✅ ¡Notas actualizadas con éxito! Refresca para ver los cambios.")
+                del st.session_state['alumno_actual'] # Limpiamos para la próxima búsqueda
+            except Exception as e:
+                st.error(f"Error al actualizar: {e}")

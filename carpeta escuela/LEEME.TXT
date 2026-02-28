@@ -1,0 +1,165 @@
+📝 MEMORIA DEL PROYECTO: GESTOR UNEFA
+Para entregar a Gemini al iniciar una nueva sesión:
+
+"Hola Gemini, soy Gabriel. Estamos trabajando en un Sistema de Control de Notas para la UNEFA (Médico Quirúrgico II) desarrollado en Python.
+
+Estado actual del código:
+
+Interfaz: Construida con Tkinter, incluye un panel superior para configurar títulos de evaluación dinámicos y una tabla Treeview con semáforo de colores (Verde/Rojo).
+
+Base de Datos: SQLite (notas_unefa.db) con dos tablas: unefa (datos de alumnos) y configuracion (nombres de las evaluaciones).
+
+Funciones Clave: Buscador en tiempo real, conversión automática a MAYÚSCULAS, eliminación de registros y generación de reportes en PDF con la librería FPDF.
+
+Pendientes: Aún no hemos aplicado el 'Detector de Ruta Universal' (os.path) ni lo hemos convertido en ejecutable portátil (.exe).
+
+Código base de referencia: [Pegar el código que me acabas de dejar aquí]"
+import tkinter as tk
+from tkinter import ttk, messagebox
+import sqlite3
+from fpdf import FPDF
+
+# --- BASE DE DATOS ---
+def conectar_db():
+    conn = sqlite3.connect("notas_unefa.db")
+    cursor = conn.cursor()
+    cursor.execute("CREATE TABLE IF NOT EXISTS configuracion (id INTEGER PRIMARY KEY, e1 TEXT, e2 TEXT, e3 TEXT, e4 TEXT, e5 TEXT)")
+    cursor.execute("""CREATE TABLE IF NOT EXISTS unefa (
+        id INTEGER PRIMARY KEY, nombre TEXT, seccion TEXT, 
+        n1 REAL, n2 REAL, n3 REAL, n4 REAL, n5 REAL, nota_final REAL
+    )""")
+    cursor.execute("SELECT COUNT(*) FROM configuracion")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO configuracion VALUES (1, 'HERIDAS', 'NUTRICION', 'DRENES', 'OSTOMIAS', 'REVISTA')")
+    conn.commit()
+    return conn
+
+# --- FUNCIONES ---
+def actualizar_cabeceras():
+    for i, var in enumerate(etiquetas_vars):
+        tabla.heading(f"N{i+1}", text=var.get().upper())
+    tabla.heading("FINAL", text="NOTA FINAL")
+
+def guardar_config():
+    conn = conectar_db()
+    conn.execute("UPDATE configuracion SET e1=?, e2=?, e3=?, e4=?, e5=? WHERE id=1", 
+                 tuple(e.get().upper() for e in etiquetas_vars))
+    conn.commit(); conn.close()
+    actualizar_cabeceras()
+    messagebox.showinfo("ÉXITO", "TÍTULOS ACTUALIZADOS")
+
+def guardar_alumno():
+    try:
+        nom = ent_nom.get().strip().upper()
+        sec = ent_sec.get().strip().upper()
+        notas = [float(e.get()) if e.get().strip() else 0.0 for e in entradas_notas]
+        promedio = round(sum(notas) / 5, 2)
+        if nom and sec:
+            conn = conectar_db()
+            conn.execute("INSERT INTO unefa (nombre, seccion, n1, n2, n3, n4, n5, nota_final) VALUES (?,?,?,?,?,?,?,?)", 
+                         (nom, sec, *notas, promedio))
+            conn.commit(); conn.close()
+            limpiar_campos(); cargar_datos()
+    except ValueError: messagebox.showerror("ERROR", "USA NÚMEROS EN LAS NOTAS")
+
+def cargar_datos():
+    for i in tabla.get_children(): tabla.delete(i)
+    conn = conectar_db()
+    conf = conn.execute("SELECT e1, e2, e3, e4, e5 FROM configuracion WHERE id=1").fetchone()
+    for i, valor in enumerate(conf): 
+        etiquetas_vars[i].delete(0, tk.END); etiquetas_vars[i].insert(0, valor)
+    actualizar_cabeceras()
+    for f in conn.execute("SELECT * FROM unefa"):
+        tag = "aprobado" if f[8] >= 10 else "reprobado"
+        tabla.insert("", tk.END, values=f, tags=(tag,))
+    conn.close()
+
+def eliminar():
+    item = tabla.focus()
+    if item and messagebox.askyesno("ELIMINAR", "¿BORRAR ALUMNO?"):
+        conn = conectar_db(); conn.execute("DELETE FROM unefa WHERE id=?", (tabla.item(item)['values'][0],))
+        conn.commit(); conn.close(); cargar_datos()
+
+def buscar(event):
+    p = ent_bus.get().upper()
+    for i in tabla.get_children(): tabla.delete(i)
+    conn = conectar_db()
+    cur = conn.execute("SELECT * FROM unefa WHERE nombre LIKE ? OR seccion LIKE ?", ('%'+p+'%', '%'+p+'%'))
+    for f in cur:
+        tag = "aprobado" if f[8] >= 10 else "reprobado"
+        tabla.insert("", tk.END, values=f, tags=(tag,))
+    conn.close()
+
+def generar_pdf():
+    try:
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", 'B', 14)
+        pdf.cell(200, 10, "UNEFA - REPORTE DE NOTAS", 0, 1, 'C')
+        pdf.ln(10)
+        
+        # Obtener los nombres actuales de las evaluaciones
+        titulos = [e.get().upper() for e in etiquetas_vars]
+        
+        # Encabezados del PDF
+        pdf.set_font("Arial", 'B', 8)
+        pdf.cell(60, 10, "NOMBRE", 1); pdf.cell(20, 10, "SEC", 1)
+        for t in titulos: pdf.cell(18, 10, t[:8], 1) # Acortamos a 8 letras para que quepan
+        pdf.cell(20, 10, "FINAL", 1); pdf.ln()
+        
+        # Datos de alumnos
+        pdf.set_font("Arial", '', 8)
+        conn = conectar_db()
+        for f in conn.execute("SELECT nombre, seccion, n1, n2, n3, n4, n5, nota_final FROM unefa"):
+            pdf.cell(60, 10, f[0], 1); pdf.cell(20, 10, f[1], 1)
+            pdf.cell(18, 10, str(f[2]), 1); pdf.cell(18, 10, str(f[3]), 1); pdf.cell(18, 10, str(f[4]), 1)
+            pdf.cell(18, 10, str(f[5]), 1); pdf.cell(18, 10, str(f[6]), 1); pdf.cell(20, 10, str(f[7]), 1)
+            pdf.ln()
+        conn.close()
+        
+        pdf.output("Reporte_UNEFA_Detallado.pdf")
+        messagebox.showinfo("PDF", "REPORTE GENERADO CON ÉXITO")
+    except Exception as e:
+        messagebox.showerror("ERROR PDF", f"No se pudo crear: {e}")
+
+def limpiar_campos():
+    for e in [ent_nom, ent_sec] + entradas_notas: e.delete(0, tk.END)
+
+# --- INTERFAZ ---
+root = tk.Tk(); root.title("SISTEMA UNEFA PROFESIONAL - GABRIEL"); root.geometry("1100x750")
+
+# 1. Configuración Superior (Títulos)
+f_conf = tk.LabelFrame(root, text=" CONFIGURAR NOMBRES DE EVALUACIÓN ", fg="blue")
+f_conf.pack(fill="x", padx=10, pady=5)
+etiquetas_vars = []
+for i in range(5):
+    e = tk.Entry(f_conf, width=15, justify="center"); e.grid(row=0, column=i, padx=5, pady=5); etiquetas_vars.append(e)
+tk.Button(f_conf, text="ACTUALIZAR TÍTULOS", command=guardar_config, bg="#f39c12").grid(row=0, column=5, padx=5)
+
+# 2. Formulario de Entrada
+f_form = tk.Frame(root); f_form.pack(pady=10)
+tk.Label(f_form, text="NOMBRE COMPLETO").grid(row=0, column=0); ent_nom = tk.Entry(f_form, width=25); ent_nom.grid(row=1, column=0, padx=5)
+tk.Label(f_form, text="SECCIÓN").grid(row=0, column=1); ent_sec = tk.Entry(f_form, width=8); ent_sec.grid(row=1, column=1, padx=5)
+entradas_notas = []
+for i in range(5):
+    tk.Label(f_form, text=f"NOTA {i+1}").grid(row=0, column=i+2)
+    en = tk.Entry(f_form, width=6); en.grid(row=1, column=i+2, padx=5); entradas_notas.append(en)
+
+# 3. Botones y Buscador (Aquí regresa el botón PDF)
+f_op = tk.Frame(root); f_op.pack(pady=10)
+tk.Button(f_op, text="GUARDAR", command=guardar_alumno, bg="#2ecc71", fg="white", width=12).pack(side=tk.LEFT, padx=5)
+tk.Button(f_op, text="ELIMINAR", command=eliminar, bg="#e74c3c", fg="white", width=12).pack(side=tk.LEFT, padx=5)
+tk.Button(f_op, text="IMPRIMIR PDF", command=generar_pdf, bg="#9b59b6", fg="white", width=12).pack(side=tk.LEFT, padx=5)
+
+tk.Label(f_op, text="   🔍 BUSCAR:").pack(side=tk.LEFT); ent_bus = tk.Entry(f_op, width=20); ent_bus.pack(side=tk.LEFT); ent_bus.bind("<KeyRelease>", buscar)
+
+# 4. Tabla de Datos
+cols = ("ID", "NOMBRE", "SECCIÓN", "N1", "N2", "N3", "N4", "N5", "FINAL")
+tabla = ttk.Treeview(root, columns=cols, show='headings', height=15)
+for c in cols: 
+    tabla.heading(c, text=c)
+    tabla.column(c, width=60 if len(c)<3 else 180, anchor="center" if c!="NOMBRE" else "w")
+tabla.tag_configure("aprobado", foreground="green"); tabla.tag_configure("reprobado", foreground="red")
+tabla.pack(padx=10, pady=10, fill="both", expand=True)
+
+cargar_datos(); root.mainloop()
